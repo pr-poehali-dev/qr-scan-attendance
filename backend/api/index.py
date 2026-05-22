@@ -5,9 +5,11 @@
 import json
 import os
 import uuid
+import pytz
 import psycopg2
 
 SCHEMA = "t_p46198453_qr_scan_attendance"
+MSK = pytz.timezone("Europe/Moscow")
 
 CORS_HEADERS = {
     "Access-Control-Allow-Origin": "*",
@@ -29,6 +31,12 @@ def err(msg, status=400):
     return {"statusCode": status, "headers": CORS_HEADERS, "body": json.dumps({"error": msg}, ensure_ascii=False)}
 
 
+def to_hm(t):
+    """(h, m) из строки HH:MM"""
+    parts = str(t).split(":")
+    return int(parts[0]), int(parts[1])
+
+
 def handler(event: dict, context) -> dict:
     """Единое API: workers, objects, scan, records, stats, dashboard."""
     if event.get("httpMethod") == "OPTIONS":
@@ -45,7 +53,7 @@ def handler(event: dict, context) -> dict:
 
     params = event.get("queryStringParameters") or {}
 
-    # ── GET /workers ── список работников
+    # ── GET /workers ──
     if method == "GET" and path == "/workers":
         conn = get_conn()
         cur = conn.cursor()
@@ -56,7 +64,7 @@ def handler(event: dict, context) -> dict:
         return ok([{"id": r[0], "name": r[1], "position": r[2], "contractor": r[3],
                     "qr_code": r[4], "is_active": r[5], "created_at": str(r[6])} for r in rows])
 
-    # ── POST /workers ── добавить работника
+    # ── POST /workers ──
     if method == "POST" and path == "/workers":
         name = (body.get("name") or "").strip()
         position = (body.get("position") or "Работник").strip()
@@ -78,7 +86,7 @@ def handler(event: dict, context) -> dict:
         return ok({"id": row[0], "name": row[1], "position": row[2], "contractor": row[3],
                    "qr_code": row[4], "created_at": str(row[5])}, 201)
 
-    # ── DELETE /workers/{id} ── удалить работника
+    # ── DELETE /workers/{id} ──
     if method == "DELETE" and path.startswith("/workers/"):
         worker_id = path.split("/")[-1]
         conn = get_conn()
@@ -88,25 +96,27 @@ def handler(event: dict, context) -> dict:
         conn.close()
         return ok({"ok": True})
 
-    # ── GET /objects ── список объектов
+    # ── GET /objects ──
     if method == "GET" and path == "/objects":
         conn = get_conn()
         cur = conn.cursor()
-        cur.execute(f"SELECT id, name, address, is_active FROM {SCHEMA}.objects ORDER BY id")
+        cur.execute(f"SELECT id, name, address, is_active, work_start, work_end FROM {SCHEMA}.objects ORDER BY id")
         rows = cur.fetchall()
         conn.close()
-        return ok([{"id": r[0], "name": r[1], "address": r[2], "is_active": r[3]} for r in rows])
+        return ok([{"id": r[0], "name": r[1], "address": r[2], "is_active": r[3],
+                    "work_start": r[4], "work_end": r[5]} for r in rows])
 
-    # ── PUT /objects/{id} ── переименовать объект
+    # ── PUT /objects/{id} ── переименовать и/или обновить пороги
     if method == "PUT" and path.startswith("/objects/"):
         obj_id = path.split("/")[-1]
-        new_name = (body.get("name") or "").strip()
-        password = (body.get("password") or "")
-        if not new_name:
-            return err("Название обязательно")
+        new_name  = (body.get("name") or "").strip()
+        password  = (body.get("password") or "")
+        work_start = (body.get("work_start") or "").strip()
+        work_end   = (body.get("work_end") or "").strip()
+
         conn = get_conn()
         cur = conn.cursor()
-        cur.execute(f"SELECT password_hash FROM {SCHEMA}.objects WHERE id = %s", (obj_id,))
+        cur.execute(f"SELECT password_hash, name FROM {SCHEMA}.objects WHERE id = %s", (obj_id,))
         row = cur.fetchone()
         if not row:
             conn.close()
@@ -114,12 +124,34 @@ def handler(event: dict, context) -> dict:
         if row[0] != password:
             conn.close()
             return err("Неверный пароль", 403)
-        cur.execute(f"UPDATE {SCHEMA}.objects SET name = %s WHERE id = %s", (new_name, obj_id))
+
+        update_name  = new_name  if new_name  else row[1]
+        update_start = work_start if work_start else None
+        update_end   = work_end   if work_end   else None
+
+        if update_start and update_end:
+            cur.execute(
+                f"UPDATE {SCHEMA}.objects SET name=%s, work_start=%s, work_end=%s WHERE id=%s",
+                (update_name, update_start, update_end, obj_id)
+            )
+        elif update_start:
+            cur.execute(
+                f"UPDATE {SCHEMA}.objects SET name=%s, work_start=%s WHERE id=%s",
+                (update_name, update_start, obj_id)
+            )
+        elif update_end:
+            cur.execute(
+                f"UPDATE {SCHEMA}.objects SET name=%s, work_end=%s WHERE id=%s",
+                (update_name, update_end, obj_id)
+            )
+        else:
+            cur.execute(f"UPDATE {SCHEMA}.objects SET name=%s WHERE id=%s", (update_name, obj_id))
+
         conn.commit()
         conn.close()
-        return ok({"ok": True, "name": new_name})
+        return ok({"ok": True, "name": update_name})
 
-    # ── POST /scan ── зафиксировать сканирование QR
+    # ── POST /scan ──
     if method == "POST" and path == "/scan":
         qr_code = (body.get("qr_code") or "").strip()
         object_id = body.get("object_id")
@@ -151,16 +183,12 @@ def handler(event: dict, context) -> dict:
         conn.commit()
         conn.close()
         return ok({
-            "id": rec[0],
-            "worker_name": worker[1],
-            "worker_position": worker[2],
-            "contractor": worker[3],
-            "object_name": obj[1],
-            "scan_type": scan_type,
-            "scanned_at": str(rec[1]),
+            "id": rec[0], "worker_name": worker[1], "worker_position": worker[2],
+            "contractor": worker[3], "object_name": obj[1],
+            "scan_type": scan_type, "scanned_at": str(rec[1]),
         })
 
-    # ── GET /records ── история (с фильтрами date, object_id, limit)
+    # ── GET /records ──
     if method == "GET" and path == "/records":
         limit = int(params.get("limit", 100))
         date_filter = params.get("date")
@@ -186,7 +214,7 @@ def handler(event: dict, context) -> dict:
             "contractor": r[3], "object_name": r[4], "scan_type": r[5], "scanned_at": str(r[6])
         } for r in rows])
 
-    # ── GET /stats ── статистика за сегодня
+    # ── GET /stats ──
     if method == "GET" and path == "/stats":
         conn = get_conn()
         cur = conn.cursor()
@@ -209,86 +237,116 @@ def handler(event: dict, context) -> dict:
             "total_registered": total,
         })
 
-    # ── GET /dashboard ── данные для главного экрана
+    # ── GET /dashboard ──
     if method == "GET" and path == "/dashboard":
-        late_threshold = params.get("late_after", "08:00")
         conn = get_conn()
         cur = conn.cursor()
 
-        # Все объекты
-        cur.execute(f"SELECT id, name FROM {SCHEMA}.objects WHERE is_active = TRUE ORDER BY id")
-        objects = cur.fetchall()
+        # Объекты с порогами
+        cur.execute(f"""SELECT id, name, work_start, work_end
+                        FROM {SCHEMA}.objects WHERE is_active = TRUE ORDER BY id""")
+        objects_rows = cur.fetchall()
+        obj_thresholds = {r[1]: {"id": r[0], "work_start": r[2], "work_end": r[3]} for r in objects_rows}
 
-        # Первые приходы сегодня на каждого работника
+        # Первый приход каждого работника сегодня
         cur.execute(f"""
-            SELECT
-                r.worker_id,
-                r.worker_name,
-                r.contractor,
-                r.object_name,
-                MIN(r.scanned_at) AS first_checkin
-            FROM {SCHEMA}.attendance_records r
-            WHERE r.scan_type = 'checkin'
-              AND DATE(r.scanned_at AT TIME ZONE 'Europe/Moscow') = CURRENT_DATE AT TIME ZONE 'Europe/Moscow'
-            GROUP BY r.worker_id, r.worker_name, r.contractor, r.object_name
+            SELECT worker_id, worker_name, contractor, object_name, object_id,
+                   MIN(scanned_at) AS first_checkin
+            FROM {SCHEMA}.attendance_records
+            WHERE scan_type = 'checkin'
+              AND DATE(scanned_at AT TIME ZONE 'Europe/Moscow') = CURRENT_DATE AT TIME ZONE 'Europe/Moscow'
+            GROUP BY worker_id, worker_name, contractor, object_name, object_id
         """)
         checkins = cur.fetchall()
+
+        # Последний уход каждого работника сегодня
+        cur.execute(f"""
+            SELECT worker_id, object_name, MAX(scanned_at) AS last_checkout
+            FROM {SCHEMA}.attendance_records
+            WHERE scan_type = 'checkout'
+              AND DATE(scanned_at AT TIME ZONE 'Europe/Moscow') = CURRENT_DATE AT TIME ZONE 'Europe/Moscow'
+            GROUP BY worker_id, object_name
+        """)
+        checkouts = {(r[0], r[1]): r[2] for r in cur.fetchall()}
         conn.close()
 
-        # Группируем по объектам и подрядчикам
-        objects_map = {}
-        for obj_id, obj_name in objects:
-            objects_map[obj_name] = {"id": obj_id, "name": obj_name, "total": 0, "contractors": {}}
+        objects_map = {r[1]: {
+            "id": r[0], "name": r[1],
+            "work_start": r[2], "work_end": r[3],
+            "total": 0, "contractors": {}
+        } for r in objects_rows}
 
         contractors_global = {}
+        total_present = 0
+        total_late = 0
+        total_early_leave = 0
 
-        for worker_id, worker_name, contractor, object_name, first_checkin in checkins:
+        for worker_id, worker_name, contractor, object_name, object_id, first_checkin in checkins:
             cname = contractor if contractor else "Без подрядчика"
-            # Время в МСК
-            import pytz
-            msk = pytz.timezone("Europe/Moscow")
-            local_time = first_checkin.astimezone(msk) if first_checkin.tzinfo else first_checkin
-            late_h, late_m = map(int, late_threshold.split(":"))
-            is_late = (local_time.hour, local_time.minute) > (late_h, late_m)
+            thresh = obj_thresholds.get(object_name, {"work_start": "08:00", "work_end": "17:00"})
 
-            # По объектам
+            local_ci = first_checkin.astimezone(MSK) if first_checkin.tzinfo else first_checkin
+            late_h, late_m = to_hm(thresh["work_start"])
+            is_late = (local_ci.hour, local_ci.minute) > (late_h, late_m)
+
+            last_co = checkouts.get((worker_id, object_name))
+            is_early_leave = False
+            if last_co:
+                local_co = last_co.astimezone(MSK) if last_co.tzinfo else last_co
+                end_h, end_m = to_hm(thresh["work_end"])
+                is_early_leave = (local_co.hour, local_co.minute) < (end_h, end_m)
+
             if object_name not in objects_map:
-                objects_map[object_name] = {"id": 0, "name": object_name, "total": 0, "contractors": {}}
+                objects_map[object_name] = {
+                    "id": object_id, "name": object_name,
+                    "work_start": thresh["work_start"], "work_end": thresh["work_end"],
+                    "total": 0, "contractors": {}
+                }
             obj_entry = objects_map[object_name]
             obj_entry["total"] += 1
+
             if cname not in obj_entry["contractors"]:
-                obj_entry["contractors"][cname] = {"present": 0, "late": 0}
+                obj_entry["contractors"][cname] = {"present": 0, "late": 0, "early_leave": 0}
             obj_entry["contractors"][cname]["present"] += 1
             if is_late:
                 obj_entry["contractors"][cname]["late"] += 1
+            if is_early_leave:
+                obj_entry["contractors"][cname]["early_leave"] += 1
 
-            # Глобально по подрядчикам
             if cname not in contractors_global:
-                contractors_global[cname] = {"present": 0, "late": 0}
+                contractors_global[cname] = {"present": 0, "late": 0, "early_leave": 0}
             contractors_global[cname]["present"] += 1
             if is_late:
                 contractors_global[cname]["late"] += 1
+            if is_early_leave:
+                contractors_global[cname]["early_leave"] += 1
+
+            total_present += 1
+            if is_late:
+                total_late += 1
+            if is_early_leave:
+                total_early_leave += 1
 
         return ok({
             "objects": [
                 {
-                    "id": v["id"],
-                    "name": v["name"],
+                    "id": v["id"], "name": v["name"],
+                    "work_start": v["work_start"], "work_end": v["work_end"],
                     "total": v["total"],
                     "contractors": [
-                        {"name": k, "present": cv["present"], "late": cv["late"]}
+                        {"name": k, "present": cv["present"], "late": cv["late"], "early_leave": cv["early_leave"]}
                         for k, cv in v["contractors"].items()
                     ]
                 }
                 for v in objects_map.values()
             ],
             "contractors": [
-                {"name": k, "present": v["present"], "late": v["late"]}
+                {"name": k, "present": v["present"], "late": v["late"], "early_leave": v["early_leave"]}
                 for k, v in sorted(contractors_global.items(), key=lambda x: -x[1]["present"])
             ],
-            "total_present": sum(v["present"] for v in contractors_global.values()),
-            "total_late": sum(v["late"] for v in contractors_global.values()),
-            "late_threshold": late_threshold,
+            "total_present": total_present,
+            "total_late": total_late,
+            "total_early_leave": total_early_leave,
         })
 
     return err("Маршрут не найден", 404)

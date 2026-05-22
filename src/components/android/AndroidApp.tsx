@@ -87,7 +87,7 @@ export default function AndroidApp() {
     if (!newName.trim() || !objects[selIdx]) return;
     setSaving(true);
     try {
-      await api.renameObject(objects[selIdx].id, newName.trim(), "1234");
+      await api.updateObject(objects[selIdx].id, { name: newName.trim(), password: "1234" });
       const updated = await api.getObjects();
       setObjects(updated);
       const found = updated.find(o => o.id === objects[selIdx].id);
