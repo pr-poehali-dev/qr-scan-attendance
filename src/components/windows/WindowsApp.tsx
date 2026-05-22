@@ -3,12 +3,13 @@ import { QRCodeSVG } from "qrcode.react";
 import Icon from "@/components/ui/icon";
 import { api, Worker, AttendanceRecord, Stats } from "@/lib/api";
 import { fmtScanned } from "@/lib/utils-time";
+import Dashboard from "./Dashboard";
 
-type WinTab = "workers" | "history" | "stats" | "reports" | "settings";
+type WinTab = "dashboard" | "workers" | "history" | "stats" | "reports" | "settings";
 type IconName = Parameters<typeof Icon>[0]["name"];
 
 export default function WindowsApp() {
-  const [activeTab, setActiveTab] = useState<WinTab>("workers");
+  const [activeTab, setActiveTab] = useState<WinTab>("dashboard");
   const [workers, setWorkers] = useState<Worker[]>([]);
   const [records, setRecords] = useState<AttendanceRecord[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
@@ -16,6 +17,7 @@ export default function WindowsApp() {
   const [showAdd, setShowAdd] = useState(false);
   const [newName, setNewName] = useState("");
   const [newPos, setNewPos] = useState("");
+  const [newContractor, setNewContractor] = useState("");
   const [adding, setAdding] = useState(false);
   const [loading, setLoading] = useState(true);
   const [printWorker, setPrintWorker] = useState<Worker | null>(null);
@@ -40,10 +42,10 @@ export default function WindowsApp() {
   const handleAdd = async () => {
     if (!newName.trim()) return;
     setAdding(true);
-    const w = await api.addWorker(newName.trim(), newPos.trim() || "Работник");
+    const w = await api.addWorker(newName.trim(), newPos.trim() || "Работник", newContractor.trim());
     setWorkers((prev) => [...prev, w]);
     setSelectedWorker(w);
-    setNewName(""); setNewPos(""); setShowAdd(false); setAdding(false);
+    setNewName(""); setNewPos(""); setNewContractor(""); setShowAdd(false); setAdding(false);
   };
 
   const handleDelete = async (id: number) => {
@@ -58,6 +60,7 @@ export default function WindowsApp() {
   };
 
   const winTabs: { id: WinTab; label: string; icon: IconName }[] = [
+    { id: "dashboard", label: "Главный", icon: "LayoutDashboard" },
     { id: "workers", label: "Работники", icon: "Users" },
     { id: "history", label: "История", icon: "ClipboardList" },
     { id: "stats", label: "Статистика", icon: "BarChart3" },
@@ -119,10 +122,12 @@ export default function WindowsApp() {
           ))}
         </aside>
 
-        <main className="flex-1 overflow-auto p-6">
+        <main className="flex-1 overflow-auto">
+
+          {activeTab === "dashboard" && <Dashboard />}
 
           {activeTab === "workers" && (
-            <div className="animate-fade-in space-y-5">
+            <div className="p-6 animate-fade-in space-y-5">
               <div className="flex items-center justify-between">
                 <div>
                   <h2 className="text-2xl font-bold" style={{ fontFamily: "Oswald, sans-serif" }}>РАБОТНИКИ</h2>
@@ -144,7 +149,7 @@ export default function WindowsApp() {
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="font-semibold text-sm truncate">{w.name}</div>
-                        <div className="text-xs text-muted-foreground mt-0.5">{w.position}</div>
+                        <div className="text-xs text-muted-foreground mt-0.5">{w.position}{w.contractor ? ` · ${w.contractor}` : ""}</div>
                       </div>
                       <div className="flex items-center gap-1.5">
                         <button onClick={(e) => { e.stopPropagation(); handlePrint(w); }}
@@ -208,6 +213,12 @@ export default function WindowsApp() {
                           onKeyDown={(e) => e.key === "Enter" && handleAdd()} placeholder="Монтажник, Электрик..."
                           className="w-full bg-secondary border border-border rounded-xl px-4 py-3 text-sm outline-none focus:border-primary transition-colors" />
                       </div>
+                      <div>
+                        <label className="text-xs text-muted-foreground uppercase tracking-widest mb-1.5 block">Подрядчик / Организация</label>
+                        <input type="text" value={newContractor} onChange={(e) => setNewContractor(e.target.value)}
+                          onKeyDown={(e) => e.key === "Enter" && handleAdd()} placeholder="ООО Ромашка, ИП Иванов..."
+                          className="w-full bg-secondary border border-border rounded-xl px-4 py-3 text-sm outline-none focus:border-primary transition-colors" />
+                      </div>
                     </div>
                     <div className="grid grid-cols-2 gap-2 pt-1">
                       <button onClick={() => setShowAdd(false)} className="py-3 rounded-xl bg-secondary text-sm font-semibold" style={{ fontFamily: "Oswald, sans-serif" }}>ОТМЕНА</button>
@@ -238,7 +249,7 @@ export default function WindowsApp() {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-border">
-                        {["Работник", "Должность", "Тип", "Время", "Объект"].map(h => (
+                        {["Работник", "Подрядчик", "Тип", "Время", "Объект"].map(h => (
                           <th key={h} className="text-left px-4 py-3 text-xs text-muted-foreground uppercase tracking-widest font-medium">{h}</th>
                         ))}
                       </tr>
@@ -246,8 +257,11 @@ export default function WindowsApp() {
                     <tbody>
                       {records.map((r, i) => (
                         <tr key={r.id} className={`border-b border-border/50 last:border-0 hover:bg-secondary/30 transition-colors animate-fade-in stagger-${Math.min(i + 1, 6)}`}>
-                          <td className="px-4 py-3.5 font-medium">{r.worker_name}</td>
-                          <td className="px-4 py-3.5 text-muted-foreground text-xs">{r.worker_position}</td>
+                          <td className="px-4 py-3.5 font-medium">
+                            <div>{r.worker_name}</div>
+                            <div className="text-xs text-muted-foreground">{r.worker_position}</div>
+                          </td>
+                          <td className="px-4 py-3.5 text-muted-foreground text-xs">{r.contractor || "—"}</td>
                           <td className="px-4 py-3.5">
                             <span className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-lg ${r.scan_type === "checkin" ? "bg-accent/15 text-accent" : "bg-secondary text-muted-foreground"}`}
                               style={{ fontFamily: "Oswald, sans-serif", letterSpacing: "0.04em" }}>

@@ -14,6 +14,7 @@ export interface Worker {
   id: number;
   name: string;
   position: string;
+  contractor: string;
   qr_code: string;
   created_at: string;
 }
@@ -29,6 +30,7 @@ export interface AttendanceRecord {
   id: number;
   worker_name: string;
   worker_position: string;
+  contractor: string;
   object_name: string;
   scan_type: "checkin" | "checkout";
   scanned_at: string;
@@ -45,15 +47,37 @@ export interface ScanResult {
   id: number;
   worker_name: string;
   worker_position: string;
+  contractor: string;
   object_name: string;
   scan_type: string;
   scanned_at: string;
 }
 
+export interface ContractorStat {
+  name: string;
+  present: number;
+  late: number;
+}
+
+export interface ObjectDashboard {
+  id: number;
+  name: string;
+  total: number;
+  contractors: ContractorStat[];
+}
+
+export interface DashboardData {
+  objects: ObjectDashboard[];
+  contractors: ContractorStat[];
+  total_present: number;
+  total_late: number;
+  late_threshold: string;
+}
+
 export const api = {
   getWorkers: () => req<Worker[]>("/workers"),
-  addWorker: (name: string, position: string) =>
-    req<Worker>("/workers", { method: "POST", body: JSON.stringify({ name, position }) }),
+  addWorker: (name: string, position: string, contractor: string) =>
+    req<Worker>("/workers", { method: "POST", body: JSON.stringify({ name, position, contractor }) }),
   deleteWorker: (id: number) =>
     req<{ ok: boolean }>(`/workers/${id}`, { method: "DELETE" }),
 
@@ -80,4 +104,7 @@ export const api = {
   },
 
   getStats: () => req<Stats>("/stats"),
+
+  getDashboard: (lateAfter = "08:00") =>
+    req<DashboardData>(`/dashboard?late_after=${lateAfter}`),
 };
