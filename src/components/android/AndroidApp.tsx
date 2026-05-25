@@ -7,6 +7,17 @@ import {
   startQueueDaemon, QueuedScan,
 } from "@/lib/offline-queue";
 
+// ── Heartbeat: планшет пингует сервер каждые 2 мин ──
+function useHeartbeat(objectId: number | undefined) {
+  useEffect(() => {
+    if (!objectId) return;
+    const send = () => { if (navigator.onLine) api.sendHeartbeat(objectId).catch(() => {}); };
+    send();
+    const t = setInterval(send, 2 * 60 * 1000);
+    return () => clearInterval(t);
+  }, [objectId]);
+}
+
 // ── QR Scanner ──
 function QRScanner({ onScan, active }: { onScan: (code: string) => void; active: boolean }) {
   const divId = "qr-reader-box";
@@ -144,6 +155,9 @@ export default function AndroidApp() {
   const refreshQueue = useCallback(() => {
     setQueue(getQueue());
   }, []);
+
+  // Heartbeat — пингуем сервер каждые 2 мин
+  useHeartbeat(selectedObj?.id);
 
   // Загрузка объектов
   useEffect(() => {

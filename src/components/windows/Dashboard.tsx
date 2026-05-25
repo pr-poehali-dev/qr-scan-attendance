@@ -1,6 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import Icon from "@/components/ui/icon";
-import { api, DashboardData, ObjectDashboard } from "@/lib/api";
+import { api, DashboardData, ObjectDashboard, TabletStatus } from "@/lib/api";
 import { useNow, fmtDate, fmtTime, fmtDay } from "@/lib/utils-time";
 
 const LOGO_URL = "https://cdn.poehali.dev/projects/621efeb5-f4c4-4aa2-bc50-e52960cacfa7/bucket/a6358c47-e644-4687-9ce5-1339ec279c62.jpg";
@@ -116,23 +116,50 @@ function ObjectSettingsModal({
   );
 }
 
+// ── Форматирование времени последнего сигнала ──
+function fmtLastSeen(secondsAgo: number | null): string {
+  if (secondsAgo === null) return "никогда";
+  if (secondsAgo < 60) return "только что";
+  const m = Math.floor(secondsAgo / 60);
+  if (m < 60) return `${m} мин. назад`;
+  const h = Math.floor(m / 60);
+  return `${h} ч. назад`;
+}
+
 // ── Главный Dashboard ──
 export default function Dashboard() {
   const now = useNow();
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [settingsObj, setSettingsObj] = useState<ObjectDashboard | null>(null);
+  const [heartbeats, setHeartbeats] = useState<TabletStatus[]>([]);
 
-  const load = () => {
+  const load = useCallback(() => {
     setLoading(true);
     api.getDashboard().then((d) => { setData(d); setLoading(false); });
-  };
+  }, []);
 
-  useEffect(() => { load(); }, []);
+  const loadHeartbeats = useCallback(() => {
+    api.getHeartbeats().then(setHeartbeats).catch(() => {});
+  }, []);
+
+  useEffect(() => { load(); loadHeartbeats(); }, [load, loadHeartbeats]);
+
+  // Dashboard: каждые 30 сек
   useEffect(() => {
     const t = setInterval(load, 30000);
     return () => clearInterval(t);
-  }, []);
+  }, [load]);
+
+  // Heartbeats: каждые 5 минут
+  useEffect(() => {
+    const t = setInterval(loadHeartbeats, 5 * 60 * 1000);
+    return () => clearInterval(t);
+  }, [loadHeartbeats]);
+
+  // Хелпер: статус планшета для объекта
+  const tabletStatus = (objId: number): TabletStatus | undefined =>
+    heartbeats.find(h => h.object_id === objId);
 
   return (
     <div className="min-h-screen bg-background grid-bg flex flex-col">
@@ -194,10 +221,29 @@ export default function Dashboard() {
             data.objects.map((obj, oi) => (
               <div key={obj.id} className={`glass-card rounded-2xl overflow-hidden animate-fade-in stagger-${Math.min(oi + 1, 5)}`}>
                 {/* Заголовок объекта */}
-                <div className="px-5 py-3 bg-secondary/50 flex items-center justify-between border-b border-border">
-                  <div className="flex items-center gap-2 min-w-0">
+                <div className={`px-5 py-3 flex items-center justify-between border-b border-border ${
+                  tabletStatus(obj.id) && !tabletStatus(obj.id)!.online
+                    ? "bg-destructive/10"
+                    : "bg-secondary/50"
+                }`}>
+                  <div className="flex items-center gap-2 min-w-0 flex-1">
                     <Icon name="MapPin" size={14} className="text-primary shrink-0" />
                     <span className="font-bold text-sm truncate" style={{ fontFamily: "Oswald, sans-serif" }}>{obj.name}</span>
+                    {/* Статус планшета */}
+                    {(() => {
+                      const ts = tabletStatus(obj.id);
+                      if (!ts) return null;
+                      return ts.online ? (
+                        <span className="flex items-center gap-1 text-[10px] text-accent bg-accent/10 px-2 py-0.5 rounded-md shrink-0">
+                          <Icon name="Wifi" size={9} />ОНЛАЙН
+                        </span>
+                      ) : (
+                        <span className="flex items-center gap-1 text-[10px] text-destructive bg-destructive/10 px-2 py-0.5 rounded-md shrink-0 font-semibold" style={{ fontFamily: "Oswald, sans-serif" }}>
+                          <Icon name="WifiOff" size={9} />
+                          НЕТ СОЕДИНЕНИЯ · {fmtLastSeen(ts.seconds_ago)}
+                        </span>
+                      );
+                    })()}
                   </div>
                   <div className="flex items-center gap-3 shrink-0">
                     {/* Пороги объекта */}

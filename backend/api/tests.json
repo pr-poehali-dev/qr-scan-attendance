@@ -1,10 +1,10 @@
 {
   "tests": [
     {
-      "name": "Root returns 404",
+      "name": "GET /heartbeat — статус планшетов",
       "method": "GET",
-      "path": "/",
-      "expectedStatus": 404,
+      "path": "/heartbeat",
+      "expectedStatus": 200,
       "bodyMatcher": "partial"
     }
   ]

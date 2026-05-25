@@ -349,4 +349,50 @@ def handler(event: dict, context) -> dict:
             "total_early_leave": total_early_leave,
         })
 
+    # ── POST /heartbeat ── планшет сообщает, что он онлайн
+    if method == "POST" and path == "/heartbeat":
+        object_id = body.get("object_id")
+        if not object_id:
+            return err("object_id обязателен")
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute(f"""
+            INSERT INTO {SCHEMA}.tablet_heartbeat (object_id, last_seen)
+            VALUES (%s, NOW())
+            ON CONFLICT (object_id) DO UPDATE SET last_seen = NOW()
+        """, (object_id,))
+        conn.commit()
+        conn.close()
+        return ok({"ok": True})
+
+    # ── GET /heartbeat ── Windows проверяет статус всех планшетов
+    if method == "GET" and path == "/heartbeat":
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute(f"""
+            SELECT o.id, o.name,
+                   h.last_seen,
+                   EXTRACT(EPOCH FROM (NOW() - h.last_seen)) AS seconds_ago
+            FROM {SCHEMA}.objects o
+            LEFT JOIN {SCHEMA}.tablet_heartbeat h ON h.object_id = o.id
+            WHERE o.is_active = TRUE
+            ORDER BY o.id
+        """)
+        rows = cur.fetchall()
+        conn.close()
+        result = []
+        for r in rows:
+            last_seen = str(r[2]) if r[2] else None
+            seconds_ago = int(r[3]) if r[3] is not None else None
+            # Считаем офлайн если нет сигнала более 6 минут (2 пропущенных heartbeat по 2 мин + запас)
+            online = seconds_ago is not None and seconds_ago < 360
+            result.append({
+                "object_id": r[0],
+                "object_name": r[1],
+                "last_seen": last_seen,
+                "seconds_ago": seconds_ago,
+                "online": online,
+            })
+        return ok(result)
+
     return err("Маршрут не найден", 404)

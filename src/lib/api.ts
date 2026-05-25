@@ -110,4 +110,20 @@ export const api = {
 
   getStats: () => req<Stats>("/stats"),
   getDashboard: () => req<DashboardData>("/dashboard"),
+
+  sendHeartbeat: (object_id: number) =>
+    req<{ ok: boolean }>("/heartbeat", {
+      method: "POST",
+      body: JSON.stringify({ object_id }),
+    }),
+
+  getHeartbeats: () => req<TabletStatus[]>("/heartbeat"),
 };
+
+export interface TabletStatus {
+  object_id: number;
+  object_name: string;
+  last_seen: string | null;
+  seconds_ago: number | null;
+  online: boolean;
+}
