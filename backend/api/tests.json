@@ -1,9 +1,23 @@
 {
   "tests": [
     {
-      "name": "GET /heartbeat — статус планшетов",
+      "name": "GET workers",
       "method": "GET",
-      "path": "/heartbeat",
+      "path": "/?action=workers",
+      "expectedStatus": 200,
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "GET objects",
+      "method": "GET",
+      "path": "/?action=objects",
+      "expectedStatus": 200,
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "GET stats",
+      "method": "GET",
+      "path": "/?action=stats",
       "expectedStatus": 200,
       "bodyMatcher": "partial"
     }

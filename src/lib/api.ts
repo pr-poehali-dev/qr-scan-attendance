@@ -1,7 +1,7 @@
 const BASE = "https://functions.poehali.dev/8a2c667d-3c58-41d2-adc8-7f514abc1794";
 
-async function req<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(BASE + path, {
+async function req<T>(qs: string, options?: RequestInit): Promise<T> {
+  const res = await fetch(`${BASE}?${qs}`, {
     headers: { "Content-Type": "application/json" },
     ...options,
   });
@@ -79,47 +79,6 @@ export interface DashboardData {
   total_early_leave: number;
 }
 
-export const api = {
-  getWorkers: () => req<Worker[]>("/workers"),
-  addWorker: (name: string, position: string, contractor: string) =>
-    req<Worker>("/workers", { method: "POST", body: JSON.stringify({ name, position, contractor }) }),
-  deleteWorker: (id: number) =>
-    req<{ ok: boolean }>(`/workers/${id}`, { method: "DELETE" }),
-
-  getObjects: () => req<ObjectItem[]>("/objects"),
-  updateObject: (id: number, payload: { name?: string; password: string; work_start?: string; work_end?: string }) =>
-    req<{ ok: boolean; name: string }>(`/objects/${id}`, {
-      method: "PUT",
-      body: JSON.stringify(payload),
-    }),
-
-  scan: (qr_code: string, object_id: number, scan_type: "checkin" | "checkout") =>
-    req<ScanResult>("/scan", {
-      method: "POST",
-      body: JSON.stringify({ qr_code, object_id, scan_type }),
-    }),
-
-  getRecords: (params?: { date?: string; object_id?: number; limit?: number }) => {
-    const qs = new URLSearchParams();
-    if (params?.date) qs.set("date", params.date);
-    if (params?.object_id) qs.set("object_id", String(params.object_id));
-    if (params?.limit) qs.set("limit", String(params.limit));
-    const q = qs.toString();
-    return req<AttendanceRecord[]>(`/records${q ? "?" + q : ""}`);
-  },
-
-  getStats: () => req<Stats>("/stats"),
-  getDashboard: () => req<DashboardData>("/dashboard"),
-
-  sendHeartbeat: (object_id: number) =>
-    req<{ ok: boolean }>("/heartbeat", {
-      method: "POST",
-      body: JSON.stringify({ object_id }),
-    }),
-
-  getHeartbeats: () => req<TabletStatus[]>("/heartbeat"),
-};
-
 export interface TabletStatus {
   object_id: number;
   object_name: string;
@@ -127,3 +86,55 @@ export interface TabletStatus {
   seconds_ago: number | null;
   online: boolean;
 }
+
+export const api = {
+  getWorkers: () =>
+    req<Worker[]>("action=workers"),
+
+  addWorker: (name: string, position: string, contractor: string) =>
+    req<Worker>("action=workers", {
+      method: "POST",
+      body: JSON.stringify({ name, position, contractor }),
+    }),
+
+  deleteWorker: (id: number) =>
+    req<{ ok: boolean }>(`action=workers&id=${id}`, { method: "DELETE" }),
+
+  getObjects: () =>
+    req<ObjectItem[]>("action=objects"),
+
+  updateObject: (id: number, payload: { name?: string; password: string; work_start?: string; work_end?: string }) =>
+    req<{ ok: boolean; name: string }>(`action=objects&id=${id}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
+
+  scan: (qr_code: string, object_id: number, scan_type: "checkin" | "checkout") =>
+    req<ScanResult>("action=scan", {
+      method: "POST",
+      body: JSON.stringify({ qr_code, object_id, scan_type }),
+    }),
+
+  getRecords: (params?: { date?: string; object_id?: number; limit?: number }) => {
+    const qs = new URLSearchParams({ action: "records" });
+    if (params?.date) qs.set("date", params.date);
+    if (params?.object_id) qs.set("object_id", String(params.object_id));
+    if (params?.limit) qs.set("limit", String(params.limit));
+    return req<AttendanceRecord[]>(qs.toString());
+  },
+
+  getStats: () =>
+    req<Stats>("action=stats"),
+
+  getDashboard: () =>
+    req<DashboardData>("action=dashboard"),
+
+  sendHeartbeat: (object_id: number) =>
+    req<{ ok: boolean }>("action=heartbeat", {
+      method: "POST",
+      body: JSON.stringify({ object_id }),
+    }),
+
+  getHeartbeats: () =>
+    req<TabletStatus[]>("action=heartbeat"),
+};
